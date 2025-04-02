@@ -1,0 +1,38 @@
+{
+  "google.com": {
+    "searchInput": "textarea[name='q'], input[name='q']",
+    "searchButton": "input[type='submit'][name='btnK'], button:contains('Google Search')",
+    "searchResultItem": ".tF2Cxc, div.g",
+    "searchResultTitle": "h3",
+    "searchResultLink": "a",
+    "searchResultDescription": "div.VwiC3b, span.FrIlee, div.s",
+    "nextPageButton": "a.LLNLxf span"
+  },
+  "github.com": {
+    "loginPageLink": "a[href='/login']",
+    "loginUsernameInput": "input#login_field",
+    "loginPasswordInput": "input#password",
+    "loginButton": "input[type='submit'][name='commit']",
+    "userProfileDropdown": "header summary.Header-link[aria-label*='View profile']",
+    "signOutButton": "form[action='/logout'] button[type='submit']"
+  },
+  "amazon.com": {
+    "searchInput": "input#twotabsearchtextbox",
+    "searchButton": "input#nav-search-submit-button",
+    "searchResultItem": "div[data-component-type='s-search-result']",
+    "searchResultTitle": "h2 > a > span",
+    "searchResultLink": "h2 > a",
+    "searchResultPriceWhole": "span.a-price-whole",
+    "searchResultPriceFraction": "span.a-price-fraction",
+    "signInLink": "#nav-link-accountList"
+  },
+  "linkedin.com": {
+    "usernameInput": "input[name='session_key']",
+    "passwordInput": "input[name='session_password']",
+    "signInButton": "button[data-id='sign-in-form__submit-btn'], button[aria-label='Sign in']",
+    "searchBar": "input.search-global-typeahead__input",
+    "postsFilterButton": "#search-reusables__filters-bar li:nth-of-type(2)",
+    "firstPostContainer": "div.feed-shared-update-v2.feed-shared-update-v2--minimal-padding.full-height",
+    "firstPostLikeButton": "button[aria-label='React Like']"
+  }
+} 
