@@ -84,12 +84,11 @@ class PageInteractor {
      * @param {import('puppeteer').CDPSession} client
      * @param {import('puppeteer').Page} page
      * @param {string} selector - CSS selector for the element.
-     * @param {object} options - e.g., { waitForNav: true, timeout, navTimeout }
+     * @param {object} options - e.g., { expectsNavigation: true }
      */
     async click(client, page, selector, options = {}) {
         const timeout = options.timeout || this.defaultTimeout;
-        const waitForNav = options.waitForNav !== false; // Default to true
-        const navTimeout = options.navTimeout || 5000; // Shorter timeout for post-click navigation
+        const expectsNavigation = options.expectsNavigation || false;
 
         logger.debug(`Attempting to click element "${selector}"...`);
         let elementHandle = null; // Initialize to null
@@ -144,13 +143,26 @@ class PageInteractor {
                 }
             }
 
-             // 4. Wait for potential navigation
-             if (clickPerformed && waitForNav) {
-                 logger.debug(`Waiting ${navTimeout}ms for potential navigation after click on "${selector}"...`);
-                 await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: navTimeout }).catch(() => {
-                      logger.debug(`No navigation detected or timed out after clicking "${selector}".`);
-                 });
-             }
+             // 4. Wait for potential navigation ONLY if expectsNavigation is true
+             if (clickPerformed && expectsNavigation) {
+                 logger.debug(`Waiting ${this.defaultTimeout}ms for expected navigation after click on "${selector}" (waitUntil: load)...`);
+                 try {
+                     // Use 'load' and defaultTimeout for navigation wait
+                     await page.waitForNavigation({ waitUntil: 'load', timeout: this.defaultTimeout });
+                     logger.info(`Navigation detected and completed after clicking "${selector}".`);
+                 } catch (navError) {
+                     if (navError.name === 'TimeoutError') {
+                          logger.warn(`Expected navigation after clicking "${selector}" timed out (waitUntil: load). Page might still be usable.`);
+                          // Consider adding checks like page.url() here if needed
+                     } else {
+                          logger.error(`Error waiting for expected navigation after click on "${selector}": ${navError.message}`);
+                          throw navError; // Re-throw unexpected errors
+                     }
+                 }
+             } else if (clickPerformed) {
+                  logger.debug(`Click performed on "${selector}", no navigation expected.`);
+              }
+             // Implicit success if we reach here without throwing
              logger.info(`Successfully completed click interaction for element "${selector}".`);
 
          } catch (error) {
@@ -213,21 +225,32 @@ class PageInteractor {
      * Presses a key on the keyboard.
      * @param {import('puppeteer').Page} page
      * @param {string} key - Key name (e.g., 'Enter', 'Tab', 'ArrowDown'). See Puppeteer docs for key names.
-     * @param {object} options - e.g., { waitForNav: true, timeout }
+     * @param {object} options - e.g., { expectsNavigation: true }
      */
     async keyPress(page, key, options = {}) {
-        const waitForNav = options.waitForNav !== false && ['Enter', 'NumpadEnter'].includes(key);
-        const navTimeout = options.navTimeout || 5000;
+        const expectsNavigation = options.expectsNavigation || false;
 
         logger.debug(`Pressing key "${key}"...`);
         try {
             await page.keyboard.press(key);
 
-            if (waitForNav) {
-                logger.debug(`Waiting ${navTimeout}ms for potential navigation after pressing "${key}"...`);
-                await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: navTimeout }).catch(() => {
-                     logger.debug(`No navigation detected or timed out after pressing "${key}".`);
-                });
+            // Wait for potential navigation ONLY if expectsNavigation is true
+            if (expectsNavigation) {
+                logger.debug(`Waiting ${this.defaultTimeout}ms for expected navigation after pressing "${key}" (waitUntil: load)...`);
+                 try {
+                    // Use 'load' and defaultTimeout for navigation wait
+                    await page.waitForNavigation({ waitUntil: 'load', timeout: this.defaultTimeout });
+                    logger.info(`Navigation detected and completed after pressing "${key}".`);
+                 } catch (navError) {
+                     if (navError.name === 'TimeoutError') {
+                         logger.warn(`Expected navigation after pressing "${key}" timed out (waitUntil: load). Page might still be usable.`);
+                     } else {
+                         logger.error(`Error waiting for expected navigation after pressing "${key}": ${navError.message}`);
+                         throw navError; // Re-throw unexpected errors
+                     }
+                 }
+            } else {
+                 logger.debug(`Key "${key}" pressed, no navigation expected.`);
             }
             logger.info(`Successfully pressed key "${key}".`);
         } catch (error) {
@@ -279,29 +302,6 @@ class PageInteractor {
     }
 
     /**
-     * Waits for a navigation event to complete.
-     * @param {import('puppeteer').Page} page
-     * @param {object} options - e.g., { waitUntil: 'networkidle2', timeout }
-     */
-    async waitForNavigation(page, options = {}) {
-        const timeout = options.timeout || this.defaultTimeout;
-        const waitUntil = options.waitUntil || 'networkidle2';
-        logger.debug(`Waiting for navigation with options: ${JSON.stringify({ waitUntil, timeout })}`);
-        try {
-            await page.waitForNavigation({ waitUntil, timeout });
-            logger.info(`Navigation complete.`);
-        } catch (error) {
-             if (error.name === 'TimeoutError') {
-                 logger.warn(`waitForNavigation timed out after ${timeout}ms (waitUntil: ${waitUntil}).`);
-                 // Often this is acceptable, so don't throw unless critical
-            } else {
-                 logger.error(`Error during waitForNavigation: ${error.message}`);
-                 throw error; // Re-throw unexpected errors
-            }
-        }
-    }
-
-     /**
      * Scrolls the page using CDP Runtime evaluation for smooth scrolling.
      * @param {import('puppeteer').CDPSession} client
      * @param {import('puppeteer').Page} page - Puppeteer Page object.

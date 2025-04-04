@@ -3,8 +3,7 @@ const helmet = require('helmet');
 const cors = require('cors');
 const morgan = require('morgan');
 const errorHandler = require('./middleware/errorHandler');
-const authRoutes = require('./routes/authRoutes');
-const interactRoutes = require('./routes/interactRoutes');
+const interactionRoutes = require('./routes/interactionRoutes');
 
 // Initialize express
 const app = express();
@@ -26,9 +25,8 @@ if (process.env.NODE_ENV === 'development') {
   app.use(morgan('common'));
 }
 
-// Mount routes
-app.use('/api/auth', authRoutes);
-app.use('/api/interact', interactRoutes);
+// Mount consolidated routes
+app.use('/api', interactionRoutes);
 
 // Health check endpoint
 app.get('/health', (req, res) => {

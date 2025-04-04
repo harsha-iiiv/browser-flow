@@ -1,10 +1,5 @@
-const fs = require('fs'); // Import fs
-const path = require('path'); // Import path
 const logger = require('../../utils/logger');
 const config = require('./config');
-
-// Path to the selectors file
-const SELECTORS_PATH = path.join(__dirname, '../../config/websiteSelectors.json'); // Adjusted path
 
 /**
  * Provides a high-level interface for interacting with browser sessions
@@ -14,7 +9,8 @@ class BrowserService {
     constructor(dependencies) {
         const requiredDeps = [
             'sessionManager', 'pageInteractor', 'loginHandler',
-            'networkMonitor', 'captchaSolver', 'screenshotTaker'
+            'networkMonitor', 'captchaSolver', 'screenshotTaker',
+            'websiteSelectors'
         ];
         for (const dep of requiredDeps) {
             if (!dependencies[dep]) {
@@ -23,71 +19,52 @@ class BrowserService {
             this[dep] = dependencies[dep];
         }
 
-        // Load website selectors configuration
-        this.websiteSelectors = this._loadSelectors();
-
         logger.info("BrowserService Facade initialized.");
     }
 
     /**
-     * Loads selectors from the configuration file.
-     * @returns {object} The parsed selectors object, or an empty object if loading fails.
-     * @private
-     */
-    _loadSelectors() {
-        try {
-            if (fs.existsSync(SELECTORS_PATH)) {
-                const data = fs.readFileSync(SELECTORS_PATH, 'utf8');
-                const selectors = JSON.parse(data);
-                logger.info(`Successfully loaded website selectors from ${SELECTORS_PATH}`);
-                return selectors;
-            } else {
-                logger.warn(`Website selectors file not found at ${SELECTORS_PATH}. Predefined selectors will not be used.`);
-                return {};
-            }
-        } catch (error) {
-            logger.error(`Error loading or parsing website selectors from ${SELECTORS_PATH}: ${error.message}. Predefined selectors will not be used.`);
-            return {}; // Return empty object on error to avoid breaking the service
-        }
-    }
-
-    /**
-     * Resolves a selector name (e.g., "searchInput") to a CSS selector string
-     * based on the current page's domain and the loaded configuration.
-     * Falls back to the original selector if no match is found.
+     * Resolves a selector name (e.g., "searchInput") or uses a generic selector
+     * based on the current page's domain, the loaded configuration, and the action object.
+     * It prioritizes resolving `action.predefinedName` if present.
+     * Falls back to `action.selector` if resolution fails or `predefinedName` is absent.
      * @param {string} pageUrl - The current URL of the page.
-     * @param {string} selectorNameOrCss - The selector name (like "searchInput") or a CSS selector string.
-     * @returns {string} The resolved CSS selector string or the original input.
+     * @param {object} action - The action object potentially containing `predefinedName` and `selector`.
+     * @returns {string | null} The resolved CSS selector string or null if neither is valid.
      * @private
      */
-    _resolveSelector(pageUrl, selectorNameOrCss) {
-        if (!selectorNameOrCss || typeof selectorNameOrCss !== 'string') {
-            return selectorNameOrCss; // Return if invalid input
-        }
+    _resolveSelector(pageUrl, action) {
+        const selectorName = action.predefinedName;
+        const genericSelector = action.selector;
 
-        // Avoid resolving actual CSS selectors
-        if (selectorNameOrCss.includes('.') || selectorNameOrCss.includes('#') || selectorNameOrCss.includes('[') || selectorNameOrCss.includes('>') || selectorNameOrCss.includes(' ')) {
-             // Basic heuristic: if it looks like CSS, don't treat it as a name
-             return selectorNameOrCss;
-        }
+        // 1. Try resolving the predefined name first
+        if (selectorName && typeof selectorName === 'string') {
+            try {
+                const url = new URL(pageUrl);
+                // Ensure www. prefix is reliably removed
+                const domain = url.hostname.replace(/^www\./, '');
 
-        try {
-            const url = new URL(pageUrl);
-            // Get domain, remove potential 'www.' prefix
-            const domain = url.hostname.replace(/^www\./, '');
-
-            if (this.websiteSelectors[domain] && this.websiteSelectors[domain][selectorNameOrCss]) {
-                const resolvedSelector = this.websiteSelectors[domain][selectorNameOrCss];
-                logger.debug(`Resolved selector name "${selectorNameOrCss}" to "${resolvedSelector}" for domain "${domain}"`);
-                return resolvedSelector;
+                if (this.websiteSelectors[domain] && this.websiteSelectors[domain][selectorName]) {
+                    const resolvedSelector = this.websiteSelectors[domain][selectorName];
+                    logger.debug(`Resolved predefined name "${selectorName}" to "${resolvedSelector}" for domain "${domain}"`);
+                    return resolvedSelector; // Use the specific selector
+                } else {
+                     logger.debug(`Predefined name "${selectorName}" not found in config for domain "${domain}". Falling back.`);
+                }
+            } catch (error) {
+                logger.warn(`_resolveSelector: Failed to parse URL "${pageUrl}" for resolution: ${error.message}`);
+                // Fall through to generic selector if URL parsing fails
             }
-        } catch (error) {
-            logger.warn(`Failed to parse URL "${pageUrl}" for selector resolution: ${error.message}`);
-            // Proceed with the original selector if URL parsing fails
         }
 
-        // If it wasn't a name found in the config for the domain, return the original value
-        return selectorNameOrCss;
+        // 2. Fallback to the generic selector provided in the action
+        if (genericSelector && typeof genericSelector === 'string') {
+             logger.debug(`_resolveSelector: Using provided generic selector: "${genericSelector}"`);
+             return genericSelector;
+        }
+
+        // 3. If neither worked
+        logger.warn(`_resolveSelector: Could not resolve selector from action (missing/invalid predefinedName/selector): ${JSON.stringify(action)}`);
+        return null; // Return null if no valid selector could be determined
     }
 
     /**
@@ -294,16 +271,36 @@ class BrowserService {
                       this.sessionManager.resetSessionTimeout(sessionId);
 
                       // --- Resolve Selectors ---
-                      let resolvedSelector = action.selector; // Default to original
-                      // Only resolve selectors for actions that use them
-                      if (['click', 'type', 'waitForSelector', 'evaluate', 'scroll'].includes(action.type) && action.selector) {
+                      let resolvedSelector = null; // Start with null
+                      let usingPredefined = false;
+                      // Only resolve selectors for actions that might use them AND have a selector/predefinedName
+                      if (['click', 'type', 'waitForSelector', 'evaluate', 'scroll'].includes(action.type) && (action.selector || action.predefinedName)) {
                            const currentPageUrl = await page.url(); // Get current URL before resolving
-                           resolvedSelector = this._resolveSelector(currentPageUrl, action.selector);
-                           // If resolvedSelector is different, maybe log it or store original in params
-                           if (resolvedSelector !== action.selector) {
-                               actionResult.params.originalSelector = action.selector; // Store original for clarity
-                               actionResult.params.resolvedSelector = resolvedSelector; // Store resolved
+
+                           // Pass the whole action object
+                           resolvedSelector = this._resolveSelector(currentPageUrl, action);
+
+                           // Update result logging based on how the selector was determined
+                           if(resolvedSelector === null) {
+                                // Handle cases where _resolveSelector couldn't find anything usable
+                                throw new Error(`Action type ${action.type} requires a valid selector, but none could be resolved from the provided action: ${JSON.stringify(action)}`);
                            }
+
+                           actionResult.params.finalSelector = resolvedSelector; // Store the selector actually used
+
+                           if (action.predefinedName) {
+                               actionResult.params.predefinedName = action.predefinedName;
+                               // Check if the resolved selector came from the predefined name (i.e., it's different from the generic one or generic didn't exist)
+                               if (resolvedSelector !== action.selector) {
+                                    if(action.selector) actionResult.params.originalSelector = action.selector; // Store original generic if it existed
+                                    usingPredefined = true;
+                                    logger.debug(`Resolution used predefined name "${action.predefinedName}" -> "${resolvedSelector}"`);
+                               } else {
+                                    // Predefined name existed but didn't resolve, or resolved to the same as generic
+                                     logger.debug(`Resolution fell back to or matched generic selector "${resolvedSelector}" despite predefined name "${action.predefinedName}"`);
+                               }
+                           }
+                           // No need for separate logging if only generic was present, as resolvedSelector will just be action.selector
                       }
                       // --- End Resolve Selectors ---
 
@@ -313,30 +310,30 @@ class BrowserService {
                              actionResult.message = `Navigated to ${action.url}`;
                              break;
                          case 'click':
-                             // Use resolvedSelector
+                             if (resolvedSelector === null) throw new Error('Click action requires a valid selector.'); // Guard
                              await this.pageInteractor.click(client, page, resolvedSelector, { timeout: action.timeout || actionTimeout, waitForNav: action.waitForNav });
                              actionResult.message = `Clicked element "${resolvedSelector}"`;
-                             if (actionResult.params.originalSelector) actionResult.message += ` (resolved from "${actionResult.params.originalSelector}")`;
+                             if (usingPredefined) actionResult.message += ` (resolved from predefined name "${actionResult.params.predefinedName}")`;
                              break;
                          case 'type':
-                              // Use resolvedSelector
+                              if (resolvedSelector === null) throw new Error('Type action requires a valid selector.'); // Guard
                              await this.pageInteractor.type(page, resolvedSelector, action.value, { delay: action.delay, clearFirst: action.clearFirst, timeout: action.timeout || actionTimeout });
                              actionResult.message = `Typed into "${resolvedSelector}"`;
-                             if (actionResult.params.originalSelector) actionResult.message += ` (resolved from "${actionResult.params.originalSelector}")`;
+                             if (usingPredefined) actionResult.message += ` (resolved from predefined name "${actionResult.params.predefinedName}")`;
                              break;
                          case 'keyPress':
                              await this.pageInteractor.keyPress(page, action.key, { waitForNav: action.waitForNav, timeout: action.timeout || actionTimeout });
                              actionResult.message = `Pressed key "${action.key}"`;
                              break;
                          case 'waitForSelector':
-                             // Use resolvedSelector
+                             if (resolvedSelector === null) throw new Error('WaitForSelector action requires a valid selector.'); // Guard
                              await this.pageInteractor.waitForSelector(page, resolvedSelector, {
                                  visible: action.visible,
                                  hidden: action.hidden,
                                  timeout: action.timeout || actionTimeout
                              });
                              actionResult.message = `Waited for selector "${resolvedSelector}"`;
-                             if (actionResult.params.originalSelector) actionResult.message += ` (resolved from "${actionResult.params.originalSelector}")`;
+                             if (usingPredefined) actionResult.message += ` (resolved from predefined name "${actionResult.params.predefinedName}")`;
                              break;
                          case 'waitForNavigation':
                              await this.pageInteractor.waitForNavigation(page, {
@@ -346,14 +343,12 @@ class BrowserService {
                              actionResult.message = `Waited for navigation`;
                              break;
                          case 'evaluate':
-                            // Validate necessary parameters
                             // Use resolvedSelector for the PARENT selector
-                            if (!resolvedSelector || !Array.isArray(action.output)) {
-                                throw new Error("Evaluate action requires 'selector' (string) and 'output' (array) parameters.");
+                            if (resolvedSelector === null || !Array.isArray(action.output)) { // Guard + check output array
+                                throw new Error("Evaluate action requires a resolvable selector/predefinedName and 'output' (array) parameter.");
                             }
                             logger.debug(`Executing structured evaluate: selector='${resolvedSelector}', limit=${action.limit}, output=${JSON.stringify(action.output)}`);
 
-                            // Call PageInteractor method (assuming it exists)
                             // Pass the RESOLVED parent selector
                             const extractedData = await this.pageInteractor.extractStructuredData(
                                 page,
@@ -363,14 +358,18 @@ class BrowserService {
                             );
 
                             actionResult.message = `Evaluated selector "${resolvedSelector}" and extracted data for ${extractedData.length} items.`;
-                             if (actionResult.params.originalSelector) actionResult.message += ` (resolved from "${actionResult.params.originalSelector}")`;
+                             if (usingPredefined) actionResult.message += ` (resolved from predefined name "${actionResult.params.predefinedName}")`;
                             actionResult.resultData = extractedData;
                             break;
                          case 'scroll':
-                             // Use resolvedSelector if scrolling to an element
-                             await this.pageInteractor.scroll(client, page, { direction: action.direction, selector: resolvedSelector, amount: action.amount });
-                              actionResult.message = `Scrolled ${action.direction ? action.direction : `to ${resolvedSelector}`}`;
-                              if (action.selector && actionResult.params.originalSelector) actionResult.message += ` (resolved from "${actionResult.params.originalSelector}")`;
+                             // Determine target only if scrolling to an element
+                             const scrollTarget = action.direction === 'element' ? resolvedSelector : null;
+                             if (action.direction === 'element' && scrollTarget === null) {
+                                 throw new Error('Scroll to element action requires a valid resolvable selector.');
+                             }
+                             await this.pageInteractor.scroll(client, page, { direction: action.direction, selector: scrollTarget, amount: action.amount });
+                              actionResult.message = `Scrolled ${action.direction === 'element' && scrollTarget ? `to ${scrollTarget}` : action.direction}`;
+                              if (action.direction === 'element' && usingPredefined) actionResult.message += ` (resolved from predefined name "${actionResult.params.predefinedName}")`;
                              break;
 
                          // ... rest of the cases (screenshot, solveCaptcha, delay) ...

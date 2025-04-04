@@ -47,20 +47,31 @@ class BrowserLauncher {
       }
 
     } else {
-      // --- Launch Logic (Existing Code Adapted) ---
+      // --- Launch Logic ---
+      // Safely determine the arguments array
+      const defaultArgs = Array.isArray(config.browserArgs) ? config.browserArgs : [];
+      const providedArgs = Array.isArray(launchOptions.args) ? launchOptions.args : defaultArgs;
+
       const effectiveOptions = {
         headless: launchOptions.headless ?? config.isHeadless,
         executablePath: config.chromeExecutablePath,
         defaultViewport: config.defaultViewport,
-        args: launchOptions.args || config.browserArgs,
+        args: providedArgs, // Assign the guaranteed array
         timeout: this.launchTimeout,
         product: config.product,
-        ...launchOptions, // Allow overriding specific launch options
+        // Selectively merge other launchOptions without overwriting args
       };
+       // Manually merge other properties from launchOptions
+       for (const key in launchOptions) {
+           if (key !== 'args' && launchOptions.hasOwnProperty(key)) {
+               effectiveOptions[key] = launchOptions[key];
+           }
+       }
 
       for (let attempt = 1; attempt <= this.connectionRetries; attempt++) {
         try {
           logger.info(`Attempt ${attempt}/${this.connectionRetries} launching new browser... Options: ${JSON.stringify(effectiveOptions)}`);
+          // Now passing effectiveOptions with guaranteed args array
           const browser = await puppeteer.launch(effectiveOptions);
 
           // Basic connection check
@@ -71,7 +82,7 @@ class BrowserLauncher {
           lastError = error;
           logger.warn(`Browser launch attempt ${attempt} failed: ${error.message}`);
           if (attempt < this.connectionRetries) {
-            await setTimeout(this.retryDelay * attempt); // Exponential backoff might be better
+            await setTimeout(this.retryDelay * attempt);
           }
         }
       }

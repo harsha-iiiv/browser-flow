@@ -30,9 +30,9 @@
     "usernameInput": "input[name='session_key']",
     "passwordInput": "input[name='session_password']",
     "signInButton": "button[data-id='sign-in-form__submit-btn'], button[aria-label='Sign in']",
-    "searchBar": "input.search-global-typeahead__input",
+    "searchBar": "input[placeholder=\"Search\"]",
     "postsFilterButton": "#search-reusables__filters-bar li:nth-of-type(2)",
     "firstPostContainer": "div.feed-shared-update-v2.feed-shared-update-v2--minimal-padding.full-height",
-    "firstPostLikeButton": "button[aria-label='React Like']"
+    "firstPostLikeButton": "button.react-button__trigger"
   }
 } 

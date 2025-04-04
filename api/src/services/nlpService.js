@@ -10,12 +10,18 @@ if (!API_KEY) {
 }
 
 const genAI = API_KEY ? new GoogleGenerativeAI(API_KEY) : null;
-const model = genAI ? genAI.getGenerativeModel({ model: 'gemini-2.5-pro-exp-03-25' }) : null;
+const model = genAI ? genAI.getGenerativeModel({ model: 'gemini-2.0-flash' }) : null;
 
 // Define the structure of browser actions we expect Gemini to return
 const ACTION_SCHEMA = `
 You MUST return a valid JSON array containing one or more action objects. Do NOT include any explanatory text before or after the JSON array.
-Each action object must have a 'type' property. Allowed types and their properties are:
+Each action object must have a 'type' property.
+
+**Selector Generation Rule:** For actions involving element selection ('click', 'type', 'evaluate', 'waitForSelector', 'scroll' to element), you MUST provide a CSS selector string in the \`selector\` field. Aim for reasonably generic selectors that might work across different sites (e.g., \`input[type='search']\`, \`button:contains("Log in")\`).
+**Selector Robustness Tip:** Prefer \`:nth-of-type(n)\` or \`:first-of-type\` over \`:nth-child(n)\`. Use comma separation (e.g., \`div.result:first-of-type a, li.search-item:first-of-type a\`) to provide fallback selectors for better cross-site compatibility.
+**Predefined Name Hint:** If the element corresponds to a common concept for which a predefined name might exist in a configuration file (like a main search input, login button, username field, first post like button, etc.), you **MUST** include the optional \`predefinedName\` field containing that conceptual name (e.g., \`searchInput\`, \`loginButton\`, \`usernameInput\`, \`firstPostLikeButton\`). Refer to the examples. The backend prioritizes this name.
+
+Allowed action types and their properties are:
 
 1.  **navigate**: Navigate to a URL.
     - \`type\`: "navigate"
@@ -23,29 +29,33 @@ Each action object must have a 'type' property. Allowed types and their properti
 
 2.  **type**: Type text into an element.
     - \`type\`: "type"
-    - \`selector\`: string (A CSS selector or a predefined name from config, e.g., 'searchInput', 'input[type="password"]').
+    - \`selector\`: string (Required: Generic CSS selector)
+    - \`predefinedName\`: string (Optional but MUST be provided if the element matches a known concept like 'searchInput', 'usernameInput', etc.)
     - \`value\`: string (The text to type)
 
 3.  **click**: Click on an element.
     - \`type\`: "click"
-    - \`selector\`: string (A CSS selector or a predefined name from config, e.g., 'loginButton', 'button:contains("Log in")').
+    - \`selector\`: string (Required: Generic CSS selector)
+    - \`predefinedName\`: string (Optional but MUST be provided if the element matches a known concept like 'loginButton', 'firstPostLikeButton', 'nextPageButton', etc.)
     - \`text\`: string (Optional: The visible text of the element, used for confirmation/clarification)
-    - \`waitForNav\`: boolean (Optional: Wait briefly for navigation after click. Default: true)
+    - \`expectsNavigation\`: boolean (Optional: Set to true if this click is expected to cause page navigation. Default: false. Backend handles waiting.)
 
-4.  **keyPress**: Simulate a key press.
+4.  **keyPress**: Press a key.
     - \`type\`: "keyPress"
-    - \`key\`: string (The key to press, e.g., "Enter", "Tab")
-    - \`waitForNav\`: boolean (Optional: Wait briefly for navigation after Enter key press. Default: true for Enter)
+    - \`key\`: string (Key name, e.g., 'Enter', 'Tab')
+    - \`expectsNavigation\`: boolean (Optional: Set to true if this key press (like Enter) is expected to cause navigation. Default: false. Backend handles waiting.)
 
 5.  **scroll**: Scroll the page.
     - \`type\`: "scroll"
     - \`direction\`: "up" | "down" | "left" | "right" | "top" | "bottom" | "element"
-    - \`amount\`: "small" | "medium" | "large" | number (Pixels to scroll if direction is up/down/left/right)
-    - \`selector\`: string (Optional: CSS selector or predefined name, required if direction is 'element')
+    - \`amount\`: "small" | "medium" | "large" | number
+    - \`selector\`: string (Optional: Generic CSS selector, required if direction is 'element')
+    - \`predefinedName\`: string (Optional but MUST be provided if direction is 'element' and the element matches a known concept)
 
 6.  **evaluate**: Extract structured data from elements on the page.
     - \`type\`: "evaluate"
-    - \`selector\`: string (CSS selector or predefined name for the PARENT elements, e.g., 'searchResultItem', '.tF2Cxc')
+    - \`selector\`: string (Required: Generic CSS selector for the PARENT elements)
+    - \`predefinedName\`: string (Optional but MUST be provided if the parent element matches a known concept like 'searchResultItem')
     - \`limit\`: number (Optional: Maximum number of parent elements to process. Default: all matched)
     - \`output\`: array (Required: Describes what data points to extract from *each* selected parent element)
         - Each object in the array must have:
@@ -56,41 +66,36 @@ Each action object must have a 'type' property. Allowed types and their properti
 
 7.  **waitForSelector**: Wait for a specific element to appear or disappear.
     - \`type\`: "waitForSelector"
-    - \`selector\`: string (CSS selector or predefined name to wait for)
+    - \`selector\`: string (Required: Generic CSS selector)
+    - \`predefinedName\`: string (Optional but MUST be provided if the element matches a known concept like 'searchResultItem', 'usernameInput', 'firstPostContainer', etc.)
     - \`timeout\`: number (Optional: Maximum time in milliseconds to wait. Defaults to action timeout)
     - \`visible\`: boolean (Optional: Wait for the element to be visible. Default: true)
     - \`hidden\`: boolean (Optional: Wait for the element to be hidden. Default: false)
 
-8.  **waitForNavigation**: Wait for a page navigation event to complete (e.g., after a click or form submission).
-    - \`type\`: "waitForNavigation"
-    - \`timeout\`: number (Optional: Maximum time in milliseconds to wait. Defaults to action timeout)
-    - \`waitUntil\`: string (Optional: Puppeteer load event, e.g., 'networkidle0', 'load'. Default: 'networkidle2')
-
-9.  **solveCaptcha**: Attempt to automatically detect and solve any captchas present on the page.
+9.  **solveCaptcha**: Attempt to solve captchas.
     - \`type\`: "solveCaptcha"
 
-10. **delay**: Pause execution for a specified duration.
+10. **delay**: Pause execution.
     - \`type\`: "delay"
-    - \`duration\`: number (Milliseconds to wait, e.g., 2000 for 2 seconds. Default: 1000)
+    - \`duration\`: number (Milliseconds to wait)
 
-11. **error**: If the command cannot be understood or translated.
+11. **error**: Indicate an error during parsing.
     - \`type\`: "error"
-    - \`message\`: string (Description of why parsing failed)
+    - \`message\`: string (Error description)
 
-12. **login**: Perform a login sequence for a specified website.
+12. **login**: Perform a pre-configured login sequence.
     - \`type\`: "login"
-    - \`target\`: string (The website to log into, e.g., "linkedin", "github". Must match a key in websiteSelectors config if applicable.)
-    // Credentials should NOT be included here; they are handled by the backend using environment variables.
+    - \`target\`: string (Identifier for the login config, e.g., 'linkedin', 'github')
 
 **Examples:**
 
-*   Command: "Go to example.com and search for product information"
+*   Command: "Go to google.com and search for browser automation"
     Expected JSON:
     \`\`\`json
     [
-      { "type": "navigate", "url": "https://example.com" },
-      { "type": "type", "selector": "input[type='search'], input[name='q']", "value": "product information" },
-      { "type": "keyPress", "key": "Enter" }
+      { "type": "navigate", "url": "https://www.google.com" },
+      { "type": "type", "selector": "textarea[name='q'], input[name='q']", "predefinedName": "searchInput", "value": "browser automation" },
+      { "type": "keyPress", "key": "Enter", "expectsNavigation": true }
     ]
     \`\`\`
 *   Command: "Log into github"
@@ -105,39 +110,37 @@ Each action object must have a 'type' property. Allowed types and their properti
     \`\`\`json
     [
       { "type": "login", "target": "linkedin" },
-      { "type": "waitForSelector", "selector": "searchBar" },
-      { "type": "type", "selector": "searchBar", "value": "artificial intelligence" },
-      { "type": "keyPress", "key": "Enter" },
-      { "type": "waitForNavigation" },
-      { "type": "waitForSelector", "selector": "postsFilterButton" },
-      { "type": "click", "selector": "postsFilterButton" }
+      { "type": "waitForSelector", "selector": "input[placeholder='Search']", "predefinedName": "searchBar", "visible": true },
+      { "type": "type", "selector": "input[placeholder='Search']", "predefinedName": "searchBar", "value": "artificial intelligence" },
+      { "type": "keyPress", "key": "Enter", "expectsNavigation": true },
+      { "type": "waitForSelector", "selector": "#search-reusables__filters-bar button:nth-of-type(2), #search-reusables__filters-bar li:nth-of-type(2) button", "predefinedName": "postsFilterButton", "visible": true },
+      { "type": "click", "selector": "#search-reusables__filters-bar button:nth-of-type(2), #search-reusables__filters-bar li:nth-of-type(2) button", "predefinedName": "postsFilterButton" }
     ]
     \`\`\`
-*   Command: "go to google.com, search for latest AI news, wait for results, then get the title and link of the first 3 results"
+*   Command: "go to google.com, search for ai news, click the first result, wait for it to load, then get the main text content"
     Expected JSON:
     \`\`\`json
     [
       { "type": "navigate", "url": "https://www.google.com" },
-      { "type": "type", "selector": "searchInput", "value": "latest AI news" },
-      { "type": "keyPress", "key": "Enter" },
-      { "type": "waitForSelector", "selector": "searchResultItem", "visible": true }, // Wait for results container using predefined name
+      { "type": "type", "selector": "textarea[name='q'], input[name='q']", "predefinedName": "searchInput", "value": "ai news" },
+      { "type": "keyPress", "key": "Enter", "expectsNavigation": true },
+      { "type": "waitForSelector", "selector": "div.g:first-of-type a, .tF2Cxc:first-of-type a, li.b_algo:first-of-type a", "predefinedName": "firstResultLink", "visible": true },
+      { "type": "click", "selector": "div.g:first-of-type a, .tF2Cxc:first-of-type a, li.b_algo:first-of-type a", "predefinedName": "firstResultLink", "expectsNavigation": true" },
       {
         "type": "evaluate",
-        "selector": "searchResultItem", // Use predefined name for parent
-        "limit": 3,
+        "selector": "main, #content, #main-content, #bodyContent",
+        "limit": 1,
         "output": [
-          { "name": "title", "type": "text", "selector": "h3" }, // Use relative CSS for children
-          { "name": "link", "type": "link", "selector": "a" }    // Use relative CSS for children
+          { "name": "content", "type": "text", "selector": "*" }
         ]
       }
     ]
     \`\`\`
-*   Command: "go to the next page of results"
+*   Command: "go to the next page of results on google"
     Expected JSON:
     \`\`\`json
     [
-      { "type": "click", "selector": "nextPageButton" },
-      { "type": "waitForNavigation" }
+      { "type": "click", "selector": "a[aria-label='Next page'], a#pnnext, td.d6cvqb a span", "predefinedName": "nextPageButton", "expectsNavigation": true }
     ]
     \`\`\`
 *   Command: "search for 'web automation tools' on google, get the first 5 results, then go to the next page and get 5 more"
@@ -146,7 +149,7 @@ Each action object must have a 'type' property. Allowed types and their properti
     [
         { "type": "navigate", "url": "https://www.google.com" },
         { "type": "type", "selector": "searchInput", "value": "web automation tools" },
-        { "type": "keyPress", "key": "Enter" },
+        { "type": "keyPress", "key": "Enter", "expectsNavigation": true },
         { "type": "waitForSelector", "selector": "searchResultItem", "visible": true },
         {
           "type": "evaluate",
@@ -157,8 +160,8 @@ Each action object must have a 'type' property. Allowed types and their properti
             { "name": "link", "type": "link", "selector": "a" }
           ]
         },
-        { "type": "click", "selector": "nextPageButton" },
-        { "type": "waitForSelector", "selector": "searchResultItem", "visible": true }, // Wait for results on the *new* page
+        { "type": "click", "selector": "nextPageButton", "expectsNavigation": true },
+        { "type": "waitForSelector", "selector": "searchResultItem", "visible": true },
         {
           "type": "evaluate",
           "selector": "searchResultItem",
