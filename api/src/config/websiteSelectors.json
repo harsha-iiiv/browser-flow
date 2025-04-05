@@ -14,7 +14,13 @@
     "loginPasswordInput": "input#password",
     "loginButton": "input[type='submit'][name='commit']",
     "userProfileDropdown": "header summary.Header-link[aria-label*='View profile']",
-    "signOutButton": "form[action='/logout'] button[type='submit']"
+    "signOutButton": "form[action='/logout'] button[type='submit']",
+    "searchInput": "button.AppHeader-searchButton",
+    "searchButton": "button.AppHeader-searchButton",
+    "searchResultItem": "div[data-testid='results-list'] > div",
+    "searchResultTitle": "h3",
+    "searchResultLink": "a",
+    "searchResultDescription": "span.search-match"
   },
   "amazon.com": {
     "searchInput": "input#twotabsearchtextbox",
